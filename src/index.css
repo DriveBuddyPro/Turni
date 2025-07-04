@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Minimal, responsive, modern tweaks */
+body {
+  font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+  background: theme('colors.gray.50');
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #e5e7eb;
+  border-radius: 8px;
+}
+
+.minimal-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+@media (max-width: 640px) {
+  .minimal-container {
+    padding: 0 0.5rem;
+  }
+}
