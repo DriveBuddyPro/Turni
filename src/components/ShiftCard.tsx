@@ -111,11 +111,15 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
         
         setLocalAssignments(optimisticAssignments);
         
-        // Update both assignments atomically using the update method
-        await Promise.all([
-          assignmentService.update(draggedAssignment.id, { station_number: targetStationNumber }),
-          assignmentService.update(targetAssignment.id, { station_number: draggedAssignment.station_number })
-        ]);
+        // Sequential update to avoid constraint violation:
+        // 1. Move target assignment to temporary station (-1)
+        // 2. Move dragged assignment to target station
+        // 3. Move target assignment to dragged assignment's original station
+        const originalDraggedStation = draggedAssignment.station_number;
+        
+        await assignmentService.update(targetAssignment.id, { station_number: -1 });
+        await assignmentService.update(draggedAssignment.id, { station_number: targetStationNumber });
+        await assignmentService.update(targetAssignment.id, { station_number: originalDraggedStation });
         
         toast.success('Lavoratori scambiati con successo!', {
           duration: 3000,

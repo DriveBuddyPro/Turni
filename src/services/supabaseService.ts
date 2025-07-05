@@ -106,124 +106,9 @@ export const shiftService = {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Utente non autenticato');
 
-    const { data: existingShifts, error: fetchError } = await supabase
-      .from('shifts')
-      .select(`
-        *,
-        assignments (
-          *,
-          employee:shared_oss!employee_id(*)
-        )
-      `)
-      .eq('user_id', user.id)
-      .eq('date', date)
-      .order('shift_type');
-
-    if (fetchError) {
-      console.error('Error fetching shifts by date:', fetchError);
-      throw new Error('Errore nel caricamento dei turni');
-    }
-
-    // Transform the data to match the expected format
-    let transformedShifts = existingShifts?.map(shift => ({
-      ...shift,
-      assignments: shift.assignments?.map((assignment: any) => ({
-        ...assignment,
-        employee: assignment.employee
-      })) || []
-    })) || [];
-
-    // If no shifts exist for this date, create missing shifts
-    if (!transformedShifts || transformedShifts.length === 0) {
-      // Create all three default shifts
-      const defaultShifts = [
-        { 
-          date, 
-          shift_type: 'morning' as const, 
-          max_stations: STATION_NAMES.morning.length,
-          user_id: user.id
-        },
-        { 
-          date, 
-          shift_type: 'afternoon' as const, 
-          max_stations: STATION_NAMES.afternoon.length,
-          user_id: user.id
-        },
-        { 
-          date, 
-          shift_type: 'evening' as const, 
-          max_stations: STATION_NAMES.evening.length,
-          user_id: user.id
-        }
-      ];
-
-      const { data: newShifts, error: createError } = await supabase
-        .from('shifts')
-        .insert(defaultShifts)
-        .select(`
-          *,
-          assignments (
-            *,
-            employee:shared_oss!employee_id(*)
-          )
-        `);
-
-      if (createError) {
-        console.error('Error creating default shifts:', createError);
-        throw new Error('Errore nella creazione dei turni');
-      }
-
-      transformedShifts = newShifts?.map(shift => ({
-        ...shift,
-        assignments: shift.assignments?.map((assignment: any) => ({
-          ...assignment,
-          employee: assignment.employee
-        })) || []
-      })) || [];
-    } else {
-      // Check if we have all three shift types, create missing ones
-      const existingShiftTypes = transformedShifts.map(shift => shift.shift_type);
-      const allShiftTypes = ['morning', 'afternoon', 'evening'] as const;
-      const missingShiftTypes = allShiftTypes.filter(type => !existingShiftTypes.includes(type));
-
-      if (missingShiftTypes.length > 0) {
-        const missingShifts = missingShiftTypes.map(shiftType => ({
-          date,
-          shift_type: shiftType,
-          max_stations: STATION_NAMES[shiftType].length,
-          user_id: user.id
-        }));
-
-        const { data: newShifts, error: createError } = await supabase
-          .from('shifts')
-          .insert(missingShifts)
-          .select(`
-            *,
-            assignments (
-              *,
-              employee:shared_oss!employee_id(*)
-            )
-          `);
-
-        if (createError) {
-          console.error('Error creating missing shifts:', createError);
-          // Don't throw error here, just log it and continue with existing shifts
-        } else {
-          // Add the new shifts to the existing ones
-          const transformedNewShifts = newShifts?.map(shift => ({
-            ...shift,
-            assignments: shift.assignments?.map((assignment: any) => ({
-              ...assignment,
-              employee: assignment.employee
-            })) || []
-          })) || [];
-
-          transformedShifts = [...transformedShifts, ...transformedNewShifts];
-        }
-      }
-
-      // Final fetch to ensure we have all shifts for the date
-      const { data: finalShifts, error: finalError } = await supabase
+    try {
+      // Prima prova a recuperare i turni esistenti
+      const { data: existingShifts, error: fetchError } = await supabase
         .from('shifts')
         .select(`
           *,
@@ -236,18 +121,144 @@ export const shiftService = {
         .eq('date', date)
         .order('shift_type');
 
-      if (!finalError && finalShifts) {
-        transformedShifts = finalShifts.map(shift => ({
-          ...shift,
-          assignments: shift.assignments?.map((assignment: any) => ({
-            ...assignment,
-            employee: assignment.employee
-          })) || []
-        }));
+      if (fetchError) {
+        console.error('Error fetching shifts by date:', fetchError);
+        throw new Error('Errore nel caricamento dei turni');
       }
-    }
 
-    return transformedShifts;
+      // Transform the data to match the expected format
+      let transformedShifts = existingShifts?.map(shift => ({
+        ...shift,
+        assignments: shift.assignments?.map((assignment: any) => ({
+          ...assignment,
+          employee: assignment.employee
+        })) || []
+      })) || [];
+
+      // Se non ci sono turni per questa data, crea i turni di default
+      if (!transformedShifts || transformedShifts.length === 0) {
+        const defaultShifts = [
+          { 
+            date, 
+            shift_type: 'morning' as const, 
+            max_stations: STATION_NAMES.morning.length,
+            user_id: user.id
+          },
+          { 
+            date, 
+            shift_type: 'afternoon' as const, 
+            max_stations: STATION_NAMES.afternoon.length,
+            user_id: user.id
+          },
+          { 
+            date, 
+            shift_type: 'evening' as const, 
+            max_stations: STATION_NAMES.evening.length,
+            user_id: user.id
+          }
+        ];
+
+        // Usa upsert per evitare conflitti
+        const { data: newShifts, error: createError } = await supabase
+          .from('shifts')
+          .upsert(defaultShifts, { 
+            onConflict: 'user_id,date,shift_type',
+            ignoreDuplicates: false 
+          })
+          .select(`
+            *,
+            assignments (
+              *,
+              employee:shared_oss!employee_id(*)
+            )
+          `);
+
+        if (createError) {
+          console.error('Error creating default shifts:', createError);
+          // Se c'è un errore nella creazione, prova a recuperare di nuovo i turni esistenti
+          const { data: retryShifts } = await supabase
+            .from('shifts')
+            .select(`
+              *,
+              assignments (
+                *,
+                employee:shared_oss!employee_id(*)
+              )
+            `)
+            .eq('user_id', user.id)
+            .eq('date', date)
+            .order('shift_type');
+
+          transformedShifts = retryShifts?.map(shift => ({
+            ...shift,
+            assignments: shift.assignments?.map((assignment: any) => ({
+              ...assignment,
+              employee: assignment.employee
+            })) || []
+          })) || [];
+        } else {
+          transformedShifts = newShifts?.map(shift => ({
+            ...shift,
+            assignments: shift.assignments?.map((assignment: any) => ({
+              ...assignment,
+              employee: assignment.employee
+            })) || []
+          })) || [];
+        }
+      } else {
+        // Controlla se mancano alcuni tipi di turno e creali
+        const existingShiftTypes = transformedShifts.map(shift => shift.shift_type);
+        const allShiftTypes = ['morning', 'afternoon', 'evening'] as const;
+        const missingShiftTypes = allShiftTypes.filter(type => !existingShiftTypes.includes(type));
+
+        if (missingShiftTypes.length > 0) {
+          const missingShifts = missingShiftTypes.map(shiftType => ({
+            date,
+            shift_type: shiftType,
+            max_stations: STATION_NAMES[shiftType].length,
+            user_id: user.id
+          }));
+
+          const { data: newShifts } = await supabase
+            .from('shifts')
+            .upsert(missingShifts, { 
+              onConflict: 'user_id,date,shift_type',
+              ignoreDuplicates: true 
+            })
+            .select(`
+              *,
+              assignments (
+                *,
+                employee:shared_oss!employee_id(*)
+              )
+            `);
+
+          if (newShifts) {
+            const transformedNewShifts = newShifts.map(shift => ({
+              ...shift,
+              assignments: shift.assignments?.map((assignment: any) => ({
+                ...assignment,
+                employee: assignment.employee
+              })) || []
+            }));
+
+            transformedShifts = [...transformedShifts, ...transformedNewShifts];
+          }
+        }
+      }
+
+      // Ordina i turni per tipo
+      const shiftOrder = { morning: 0, afternoon: 1, evening: 2 };
+      transformedShifts.sort((a, b) => 
+        shiftOrder[a.shift_type as keyof typeof shiftOrder] - 
+        shiftOrder[b.shift_type as keyof typeof shiftOrder]
+      );
+
+      return transformedShifts;
+    } catch (error) {
+      console.error('Error in getByDate:', error);
+      throw error;
+    }
   }
 };
 
