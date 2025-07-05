@@ -23,6 +23,8 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
   const [draggedAssignment, setDraggedAssignment] = useState<any>(null);
   const [dragOverStation, setDragOverStation] = useState<number | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [touchStartPos, setTouchStartPos] = useState<{ x: number; y: number } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   
   // Use regular state instead of useOptimistic (React 18 compatible)
   const [localAssignments, setLocalAssignments] = useState(shift?.assignments || []);
@@ -189,43 +191,81 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
     setDraggedAssignment(null);
   };
 
-  // Touch handlers for mobile
-  const handleTouchStart = (assignment: any) => {
+  // Improved Touch handlers for mobile
+  const handleTouchStart = (e: React.TouchEvent, assignment: any) => {
     if (isProcessing) return;
+    
+    const touch = e.touches[0];
+    setTouchStartPos({ x: touch.clientX, y: touch.clientY });
     setDraggedAssignment(assignment);
+    setIsDragging(false);
+    
+    // Prevent default to avoid scrolling
+    e.preventDefault();
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    if (isProcessing) return;
-    e.preventDefault();
-    const touch = e.touches[0];
-    const element = document.elementFromPoint(touch.clientX, touch.clientY);
-    const stationElement = element?.closest('[data-station-number]');
+    if (isProcessing || !draggedAssignment || !touchStartPos) return;
     
-    if (stationElement) {
-      const stationNumber = parseInt(stationElement.getAttribute('data-station-number') || '0');
-      setDragOverStation(stationNumber);
-    } else {
-      setDragOverStation(null);
+    const touch = e.touches[0];
+    const deltaX = Math.abs(touch.clientX - touchStartPos.x);
+    const deltaY = Math.abs(touch.clientY - touchStartPos.y);
+    
+    // Start dragging if moved more than 10px
+    if (!isDragging && (deltaX > 10 || deltaY > 10)) {
+      setIsDragging(true);
+      // Add visual feedback
+      document.body.style.userSelect = 'none';
+    }
+    
+    if (isDragging) {
+      e.preventDefault();
+      
+      // Find the element under the touch point
+      const element = document.elementFromPoint(touch.clientX, touch.clientY);
+      const stationElement = element?.closest('[data-station-number]');
+      
+      if (stationElement) {
+        const stationNumber = parseInt(stationElement.getAttribute('data-station-number') || '0');
+        setDragOverStation(stationNumber);
+      } else {
+        setDragOverStation(null);
+      }
     }
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (isProcessing) return;
-    e.preventDefault();
-    const touch = e.changedTouches[0];
-    const element = document.elementFromPoint(touch.clientX, touch.clientY);
-    const stationElement = element?.closest('[data-station-number]');
     
-    if (stationElement && draggedAssignment) {
-      const stationNumber = parseInt(stationElement.getAttribute('data-station-number') || '0');
-      if (draggedAssignment.station_number !== stationNumber) {
-        handleMoveAssignment(draggedAssignment, stationNumber);
+    // Restore user selection
+    document.body.style.userSelect = '';
+    
+    if (isDragging && draggedAssignment && touchStartPos) {
+      e.preventDefault();
+      
+      const touch = e.changedTouches[0];
+      const element = document.elementFromPoint(touch.clientX, touch.clientY);
+      const stationElement = element?.closest('[data-station-number]');
+      
+      if (stationElement) {
+        const stationNumber = parseInt(stationElement.getAttribute('data-station-number') || '0');
+        if (draggedAssignment.station_number !== stationNumber) {
+          handleMoveAssignment(draggedAssignment, stationNumber);
+        }
       }
     }
     
+    // Reset states
     setDraggedAssignment(null);
     setDragOverStation(null);
+    setTouchStartPos(null);
+    setIsDragging(false);
+  };
+
+  // Helper function to truncate long names
+  const truncateName = (name: string, maxLength: number = 20) => {
+    if (name.length <= maxLength) return name;
+    return name.substring(0, maxLength) + '...';
   };
 
   const assignments = localAssignments;
@@ -370,13 +410,13 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
             </div>
           </div>
 
-          {/* Stations Grid with Improved Visibility */}
+          {/* Stations Grid with Improved Mobile Layout */}
           <div className="space-y-3 mb-4 sm:mb-6">
             {stationsWithAssignments.map((station) => (
               <div
                 key={station.stationNumber}
                 data-station-number={station.stationNumber}
-                className={`relative p-4 border-2 rounded-xl transition-all duration-200 group ${
+                className={`relative p-3 sm:p-4 border-2 rounded-xl transition-all duration-200 group ${
                   dragOverStation === station.stationNumber
                     ? `${colors.border} ${colors.bg} shadow-lg`
                     : station.assignment
@@ -389,54 +429,64 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
               >
                 <div className="flex items-center justify-between">
                   {/* Station Info */}
-                  <div className="flex items-center space-x-3">
-                    <div className={`px-3 py-2 rounded-lg text-white font-bold text-sm ${colors.station} shadow-sm`}>
+                  <div className="flex items-center space-x-2 sm:space-x-3 min-w-0 flex-1">
+                    <div className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg text-white font-bold text-xs sm:text-sm ${colors.station} shadow-sm flex-shrink-0`}>
                       {station.stationName}
                     </div>
                     
                     {station.assignment ? (
-                      /* Assigned Employee Card */
+                      /* Assigned Employee Card - Improved Mobile Layout */
                       <div
                         draggable={!isProcessing}
                         onDragStart={(e) => handleDragStart(e, station.assignment)}
-                        onTouchStart={() => handleTouchStart(station.assignment)}
+                        onTouchStart={(e) => handleTouchStart(e, station.assignment)}
                         onTouchMove={handleTouchMove}
                         onTouchEnd={handleTouchEnd}
-                        className={`flex items-center space-x-3 p-3 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-600 dark:to-gray-700 rounded-lg cursor-move hover:shadow-md transition-all duration-200 group min-w-0 flex-1 ${
+                        className={`flex items-center space-x-2 sm:space-x-3 p-2 sm:p-3 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-600 dark:to-gray-700 rounded-lg cursor-move hover:shadow-md transition-all duration-200 group min-w-0 flex-1 ${
                           draggedAssignment?.id === station.assignment.id ? 'opacity-50 scale-95' : ''
-                        } ${isProcessing ? 'cursor-not-allowed' : ''}`}
+                        } ${isProcessing ? 'cursor-not-allowed' : ''} ${isDragging ? 'z-50' : ''}`}
+                        style={{
+                          touchAction: 'none',
+                          userSelect: 'none'
+                        }}
                       >
                         {/* Employee Avatar */}
-                        <div className={`w-10 h-10 rounded-full ${colors.station} flex items-center justify-center text-white font-bold text-sm shadow-sm flex-shrink-0`}>
+                        <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full ${colors.station} flex items-center justify-center text-white font-bold text-xs sm:text-sm shadow-sm flex-shrink-0`}>
                           {station.assignment.employee?.name?.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2) || 'OS'}
                         </div>
                         
-                        {/* Employee Info */}
+                        {/* Employee Info - Improved Text Handling */}
                         <div className="min-w-0 flex-1">
-                          <p className="font-bold text-gray-900 dark:text-white text-sm sm:text-base truncate">
-                            {station.assignment.employee?.name || 'Nome non disponibile'}
+                          <p className="font-bold text-gray-900 dark:text-white text-xs sm:text-sm leading-tight">
+                            <span className="block sm:hidden">
+                              {truncateName(station.assignment.employee?.name || 'Nome non disponibile', 15)}
+                            </span>
+                            <span className="hidden sm:block">
+                              {truncateName(station.assignment.employee?.name || 'Nome non disponibile', 25)}
+                            </span>
                           </p>
-                          <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 truncate">
+                          <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
                             {station.assignment.employee?.role || 'OSS'}
                           </p>
                         </div>
                         
                         {/* Drag Indicator */}
-                        <div className="text-gray-400 dark:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                        <div className="text-gray-400 dark:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 hidden sm:block">
+                          <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="currentColor" viewBox="0 0 20 20">
                             <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
                           </svg>
                         </div>
                       </div>
                     ) : (
                       /* Empty Station */
-                      <div className="flex items-center space-x-3 p-3 text-gray-400 dark:text-gray-500 min-w-0 flex-1">
-                        <div className="w-10 h-10 rounded-full border-2 border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center flex-shrink-0">
-                          <User className="w-5 h-5" />
+                      <div className="flex items-center space-x-2 sm:space-x-3 p-2 sm:p-3 text-gray-400 dark:text-gray-500 min-w-0 flex-1">
+                        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full border-2 border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center flex-shrink-0">
+                          <User className="w-4 h-4 sm:w-5 sm:h-5" />
                         </div>
-                        <div>
-                          <p className="font-medium text-sm">Postazione Libera</p>
-                          <p className="text-xs">Trascina qui un lavoratore</p>
+                        <div className="min-w-0">
+                          <p className="font-medium text-xs sm:text-sm">Postazione Libera</p>
+                          <p className="text-xs hidden sm:block">Trascina qui un lavoratore</p>
+                          <p className="text-xs sm:hidden">Tocca e trascina</p>
                         </div>
                       </div>
                     )}
@@ -447,10 +497,10 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
                     <button
                       onClick={() => handleDeleteAssignment(station.assignment.id)}
                       disabled={isProcessing}
-                      className="p-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/50 rounded-lg transition-all duration-200 opacity-0 group-hover:opacity-100 flex-shrink-0 ml-2 disabled:opacity-50"
+                      className="p-1.5 sm:p-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/50 rounded-lg transition-all duration-200 opacity-0 group-hover:opacity-100 flex-shrink-0 ml-2 disabled:opacity-50"
                       title="Rimuovi Assegnazione"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3 h-3 sm:w-4 sm:h-4" />
                     </button>
                   )}
                 </div>
@@ -458,10 +508,11 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
             ))}
           </div>
 
-          {/* Instructions */}
-          <div className={`text-center py-3 ${colors.bg} rounded-xl border ${colors.border} border-opacity-30`}>
-            <p className={`text-sm font-medium ${colors.text}`}>
-              🖱️ Trascina i lavoratori per spostarli o scambiarli • 📱 Su mobile: tieni premuto e trascina
+          {/* Instructions - Mobile Optimized */}
+          <div className={`text-center py-2 sm:py-3 ${colors.bg} rounded-xl border ${colors.border} border-opacity-30`}>
+            <p className={`text-xs sm:text-sm font-medium ${colors.text}`}>
+              <span className="block sm:hidden">📱 Tocca e trascina per spostare</span>
+              <span className="hidden sm:block">🖱️ Trascina i lavoratori per spostarli o scambiarli • 📱 Su mobile: tieni premuto e trascina</span>
             </p>
           </div>
         </div>
