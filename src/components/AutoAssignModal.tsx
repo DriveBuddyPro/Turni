@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { X, Users, CheckCircle, AlertCircle } from 'lucide-react';
-import { assignmentService, employeeService, STATION_NAMES } from '../services/supabaseService';
+import { assignmentService, employeeService, STATION_NAMES, shiftService } from '../services/supabaseService';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
 
 interface AutoAssignModalProps {
@@ -10,21 +12,52 @@ interface AutoAssignModalProps {
 }
 
 const AutoAssignModal: React.FC<AutoAssignModalProps> = ({ shift, onClose }) => {
+  const { user } = useAuth();
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [employees, setEmployees] = useState<any[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
+  const [dailyAssignedEmployeeIds, setDailyAssignedEmployeeIds] = useState<string[]>([]);
 
   useEffect(() => {
-    fetchEmployees();
+    fetchEmployeesAndDailyAssignments();
   }, []);
 
-  const fetchEmployees = async () => {
+  const fetchEmployeesAndDailyAssignments = async () => {
     try {
-      const data = await employeeService.getAll();
-      setEmployees(data.filter(emp => emp.active));
+      // Fetch all employees
+      const allEmployees = await employeeService.getAll();
+      
+      // Use the new database function to get daily assignments by name
+      const { data: dailyAssignments, error } = await supabase
+        .from('assignments')
+        .select(`
+          employee_id,
+          employee:shared_oss!employee_id(name)
+        `)
+        .eq('user_id', user?.id)
+        .in('shift_id', [
+          // Get all shift IDs for the same date
+          ...(await shiftService.getByDate(shift.date)).map(s => s.id)
+        ]);
+
+      if (error) {
+        console.error('Error fetching daily assignments:', error);
+        throw new Error('Errore nel caricamento delle assegnazioni giornaliere');
+      }
+
+      // Extract assigned employee names (not just IDs)
+      const assignedEmployeeNames = dailyAssignments?.map(a => a.employee?.name.toLowerCase().trim()) || [];
+      
+      // Filter employees by name instead of ID to prevent duplicates
+      const availableEmployees = allEmployees.filter(emp => 
+        emp.active && !assignedEmployeeNames.includes(emp.name.toLowerCase().trim())
+      );
+      
+      setDailyAssignedEmployeeIds(dailyAssignments?.map(a => a.employee_id) || []);
+      setEmployees(allEmployees.filter(emp => emp.active));
     } catch (error) {
-      console.error('Error fetching employees:', error);
+      console.error('Error fetching employees and daily assignments:', error);
       toast.error('Errore nel caricamento degli OSS');
     } finally {
       setDataLoading(false);
@@ -37,9 +70,14 @@ const AutoAssignModal: React.FC<AutoAssignModalProps> = ({ shift, onClose }) => 
   // Get station names for this shift type
   const stationNames = STATION_NAMES[shift.shift_type as keyof typeof STATION_NAMES] || [];
   
-  // Ordina i lavoratori disponibili alfabeticamente
+  // Filter out employees that are:
+  // 1. Already assigned to this shift
+  // 2. Already assigned to ANY shift on the same date
   const availableEmployees = employees
-    .filter(emp => !assignedEmployeeIds.includes(emp.id))
+    .filter(emp => 
+      !assignedEmployeeIds.includes(emp.id) && 
+      !dailyAssignedEmployeeIds.includes(emp.id)
+    )
     .sort((a, b) => a.name.localeCompare(b.name));
     
   const availableStationIndexes = stationNames
@@ -132,8 +170,26 @@ const AutoAssignModal: React.FC<AutoAssignModalProps> = ({ shift, onClose }) => 
               <p>• Lavoratori disponibili: {availableEmployees.length}</p>
               <p>• Massimo selezionabili: {maxSelectable}</p>
               <p>• Attualmente selezionati: {selectedEmployeeIds.length}</p>
+              {dailyAssignedEmployeeIds.length > 0 && (
+                <p className="text-amber-700 dark:text-amber-300">• {dailyAssignedEmployeeIds.length} OSS già assegnati oggi</p>
+              )}
             </div>
           </div>
+
+          {/* Daily Assignment Warning */}
+          {dailyAssignedEmployeeIds.length > 0 && (
+            <div className="bg-amber-50 dark:bg-amber-900/50 p-3 sm:p-4 rounded-lg border border-amber-200 dark:border-amber-800">
+              <div className="flex items-center mb-2">
+                <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5 text-amber-600 dark:text-amber-400 mr-2" />
+                <h3 className="font-medium text-amber-800 dark:text-amber-200 text-sm sm:text-base">
+                  Regola Un Turno al Giorno
+                </h3>
+              </div>
+              <p className="text-xs sm:text-sm text-amber-700 dark:text-amber-300">
+                Gli OSS già assegnati a turni in questa giornata non sono disponibili per l'assegnazione automatica.
+              </p>
+            </div>
+          )}
 
           {/* Employee Selection */}
           <div>
@@ -167,7 +223,10 @@ const AutoAssignModal: React.FC<AutoAssignModalProps> = ({ shift, onClose }) => 
             </div>
             {availableEmployees.length === 0 && (
               <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
-                Nessun lavoratore disponibile per questo turno
+                {dailyAssignedEmployeeIds.length > 0 
+                  ? 'Tutti gli OSS disponibili sono già assegnati a turni in questa giornata'
+                  : 'Nessun lavoratore disponibile per questo turno'
+                }
               </p>
             )}
           </div>

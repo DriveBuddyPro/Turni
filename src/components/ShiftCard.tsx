@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
-import { Users, Shuffle, Trash2, Clock, MapPin, FileText, MoreVertical, User } from 'lucide-react';
+import { Users, Shuffle, Trash2, Clock, MapPin, FileText, MoreVertical, User, Lock, Info } from 'lucide-react';
 import { assignmentService, STATION_NAMES } from '../services/supabaseService';
 import { exportSingleShiftPDF } from '../utils/pdfExport';
 import AutoAssignModal from './AutoAssignModal';
+import AssignmentInfoModal from './AssignmentInfoModal';
 import toast from 'react-hot-toast';
+import { useAuth } from '../contexts/AuthContext';
 
 interface ShiftCardProps {
   shift: any;
@@ -18,7 +20,9 @@ interface ShiftCardProps {
 }
 
 const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, onRefetch }) => {
+  const { user } = useAuth();
   const [showAutoAssignModal, setShowAutoAssignModal] = useState(false);
+  const [showAssignmentInfo, setShowAssignmentInfo] = useState<any>(null);
   const [showMobileActions, setShowMobileActions] = useState(false);
   const [draggedAssignment, setDraggedAssignment] = useState<any>(null);
   const [dragOverStation, setDragOverStation] = useState<number | null>(null);
@@ -34,6 +38,11 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
     setLocalAssignments(shift?.assignments || []);
   }, [shift?.assignments]);
 
+  // Check if current user can modify an assignment
+  const canModifyAssignment = (assignment: any) => {
+    return assignment.created_by === user?.id;
+  };
+
   const handleDeleteAssignment = async (assignmentId: string) => {
     if (isProcessing) return;
     setIsProcessing(true);
@@ -41,6 +50,13 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
     // Optimistic update using regular state
     const previousAssignments = localAssignments;
     setLocalAssignments(prev => prev.filter((a: any) => a.id !== assignmentId));
+
+    // Find the assignment to check permissions
+    const assignmentToDelete = localAssignments.find((a: any) => a.id === assignmentId);
+    if (assignmentToDelete && !canModifyAssignment(assignmentToDelete)) {
+      toast.error('Non puoi eliminare questa assegnazione. Puoi eliminare solo le tue assegnazioni.');
+      return;
+    }
     
     try {
       await assignmentService.delete(assignmentId);
@@ -73,6 +89,10 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
     onRefetch();
   };
 
+  const handleShowAssignmentInfo = (assignment: any) => {
+    setShowAssignmentInfo(assignment);
+  };
+
   const handleExportShiftPDF = () => {
     if (!shift || !shift.assignments || shift.assignments.length === 0) {
       toast.error('Nessuna assegnazione da esportare per questo turno', {
@@ -93,6 +113,16 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
   const handleMoveAssignment = async (draggedAssignment: any, targetStationNumber: number) => {
     if (isProcessing) return;
     setIsProcessing(true);
+
+    // Check if user can modify this assignment
+    if (!canModifyAssignment(draggedAssignment)) {
+      toast.error('Non puoi spostare questa assegnazione. Puoi modificare solo le tue assegnazioni.', {
+        duration: 4000,
+        icon: '🔒',
+      });
+      setIsProcessing(false);
+      return;
+    }
     
     const previousAssignments = localAssignments;
     
@@ -102,6 +132,16 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
       
       if (targetAssignment) {
         // SWAP: There's someone at the target station, so we swap them
+        // Check if user can modify the target assignment too
+        if (!canModifyAssignment(targetAssignment)) {
+          toast.error('Non puoi scambiare con questa assegnazione. Puoi modificare solo le tue assegnazioni.', {
+            duration: 4000,
+            icon: '🔒',
+          });
+          setIsProcessing(false);
+          return;
+        }
+
         const optimisticAssignments = localAssignments.map((a: any) => {
           if (a.id === draggedAssignment.id) {
             return { ...a, station_number: targetStationNumber };
@@ -163,7 +203,7 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
 
   // Drag and Drop handlers
   const handleDragStart = (e: React.DragEvent, assignment: any) => {
-    if (isProcessing) {
+    if (isProcessing || !canModifyAssignment(assignment)) {
       e.preventDefault();
       return;
     }
@@ -193,7 +233,7 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
 
   // Improved Touch handlers for mobile
   const handleTouchStart = (e: React.TouchEvent, assignment: any) => {
-    if (isProcessing) return;
+    if (isProcessing || !canModifyAssignment(assignment)) return;
     
     const touch = e.touches[0];
     setTouchStartPos({ x: touch.clientX, y: touch.clientY });
@@ -437,27 +477,43 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
                     {station.assignment ? (
                       /* Assigned Employee Card - Improved Mobile Layout */
                       <div
+                        key={`assigned-${station.assignment.id}`}
                         draggable={!isProcessing}
                         onDragStart={(e) => handleDragStart(e, station.assignment)}
                         onTouchStart={(e) => handleTouchStart(e, station.assignment)}
                         onTouchMove={handleTouchMove}
                         onTouchEnd={handleTouchEnd}
-                        className={`flex items-center space-x-2 sm:space-x-3 p-2 sm:p-3 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-600 dark:to-gray-700 rounded-lg cursor-move hover:shadow-md transition-all duration-200 group min-w-0 flex-1 ${
+                        className={`flex items-center space-x-2 sm:space-x-3 p-2 sm:p-3 bg-gradient-to-r rounded-lg transition-all duration-200 group min-w-0 flex-1 ${
+                          canModifyAssignment(station.assignment)
+                            ? 'from-gray-50 to-gray-100 dark:from-gray-600 dark:to-gray-700 cursor-move hover:shadow-md'
+                            : 'from-red-50 to-red-100 dark:from-red-900/30 dark:to-red-800/30 cursor-not-allowed'
+                        } ${
                           draggedAssignment?.id === station.assignment.id ? 'opacity-50 scale-95' : ''
                         } ${isProcessing ? 'cursor-not-allowed' : ''} ${isDragging ? 'z-50' : ''}`}
                         style={{
-                          touchAction: 'none',
+                          touchAction: canModifyAssignment(station.assignment) ? 'none' : 'auto',
                           userSelect: 'none'
                         }}
                       >
                         {/* Employee Avatar */}
-                        <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full ${colors.station} flex items-center justify-center text-white font-bold text-xs sm:text-sm shadow-sm flex-shrink-0`}>
+                        <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-white font-bold text-xs sm:text-sm shadow-sm flex-shrink-0 relative ${
+                          canModifyAssignment(station.assignment) ? colors.station : 'bg-red-500'
+                        }`}>
                           {station.assignment.employee?.name?.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2) || 'OS'}
+                          {!canModifyAssignment(station.assignment) && (
+                            <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full flex items-center justify-center">
+                              <Lock className="w-2 h-2 text-white" />
+                            </div>
+                          )}
                         </div>
                         
                         {/* Employee Info - Improved Text Handling */}
                         <div className="min-w-0 flex-1">
-                          <p className="font-bold text-gray-900 dark:text-white text-xs sm:text-sm leading-tight">
+                          <p className={`font-bold text-xs sm:text-sm leading-tight ${
+                            canModifyAssignment(station.assignment) 
+                              ? 'text-gray-900 dark:text-white' 
+                              : 'text-red-800 dark:text-red-200'
+                          }`}>
                             <span className="block sm:hidden">
                               {truncateName(station.assignment.employee?.name || 'Nome non disponibile', 15)}
                             </span>
@@ -465,17 +521,33 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
                               {truncateName(station.assignment.employee?.name || 'Nome non disponibile', 25)}
                             </span>
                           </p>
-                          <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
+                          <p className={`text-xs truncate ${
+                            canModifyAssignment(station.assignment)
+                              ? 'text-gray-600 dark:text-gray-400'
+                              : 'text-red-600 dark:text-red-300'
+                          }`}>
                             {station.assignment.employee?.role || 'OSS'}
+                            {!canModifyAssignment(station.assignment) && ' • Non modificabile'}
                           </p>
                         </div>
                         
-                        {/* Drag Indicator */}
-                        <div className="text-gray-400 dark:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 hidden sm:block">
-                          <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="currentColor" viewBox="0 0 20 20">
-                            <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
-                          </svg>
-                        </div>
+                        {/* Info Button */}
+                        <button
+                          onClick={() => handleShowAssignmentInfo(station.assignment)}
+                          className="p-1 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/50 rounded transition-colors flex-shrink-0"
+                          title="Informazioni Assegnazione"
+                        >
+                          <Info className="w-3 h-3 sm:w-4 sm:h-4" />
+                        </button>
+
+                        {/* Drag Indicator - only for modifiable assignments */}
+                        {canModifyAssignment(station.assignment) && (
+                          <div className="text-gray-400 dark:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 hidden sm:block">
+                            <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="currentColor" viewBox="0 0 20 20">
+                              <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+                            </svg>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       /* Empty Station */
@@ -493,7 +565,7 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
                   </div>
 
                   {/* Remove Button */}
-                  {station.assignment && (
+                  {station.assignment && canModifyAssignment(station.assignment) && (
                     <button
                       onClick={() => handleDeleteAssignment(station.assignment.id)}
                       disabled={isProcessing}
@@ -504,17 +576,19 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
                     </button>
                   )}
                 </div>
+
+                {/* Non-modifiable assignment indicator */}
+                {station.assignment && !canModifyAssignment(station.assignment) && (
+                  <div className="absolute top-2 right-2 flex items-center space-x-1 bg-red-100 dark:bg-red-900/50 text-red-800 dark:text-red-200 px-2 py-1 rounded-full text-xs">
+                    <Lock className="w-3 h-3" />
+                    <span className="hidden sm:inline">Non modificabile</span>
+                  </div>
+                )}
               </div>
             ))}
           </div>
 
           {/* Instructions - Mobile Optimized */}
-          <div className={`text-center py-2 sm:py-3 ${colors.bg} rounded-xl border ${colors.border} border-opacity-30`}>
-            <p className={`text-xs sm:text-sm font-medium ${colors.text}`}>
-              <span className="block sm:hidden">📱 Tocca e trascina per spostare</span>
-              <span className="hidden sm:block">🖱️ Trascina i lavoratori per spostarli o scambiarli • 📱 Su mobile: tieni premuto e trascina</span>
-            </p>
-          </div>
         </div>
       </div>
 
@@ -524,6 +598,14 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
           shift={shift}
           employees={[]} // Will be fetched in the modal
           onClose={handleCloseAutoAssignModal}
+        />
+      )}
+
+      {/* Assignment Info Modal */}
+      {showAssignmentInfo && (
+        <AssignmentInfoModal
+          assignment={showAssignmentInfo}
+          onClose={() => setShowAssignmentInfo(null)}
         />
       )}
 

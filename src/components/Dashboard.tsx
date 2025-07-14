@@ -113,7 +113,7 @@ const Dashboard = () => {
         <div className="flex flex-col space-y-4 lg:flex-row lg:items-center lg:justify-between lg:space-y-0 mb-6 lg:mb-8">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-2">Dashboard Turni</h1>
-            <p className="text-gray-600 dark:text-gray-400 text-sm sm:text-base">Gestisci i turni di lavoro e le assegnazioni con drag & drop</p>
+            <p className="text-gray-600 dark:text-gray-400 text-sm sm:text-base">Gestisci i turni di lavoro e le assegnazioni</p>
           </div>
           <div className="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-4">
             <button 

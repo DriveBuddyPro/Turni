@@ -272,6 +272,48 @@ export const assignmentService = {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Utente non autenticato');
 
+    // Get employee name for duplicate check
+    const { data: employeeData, error: employeeError } = await supabase
+      .from('shared_oss')
+      .select('name')
+      .eq('id', assignment.employee_id)
+      .single();
+
+    if (employeeError) {
+      console.error('Error fetching employee data:', employeeError);
+      throw new Error('Errore nel recupero dei dati OSS');
+    }
+
+    // Get shift date for duplicate check
+    const { data: shiftData, error: shiftError } = await supabase
+      .from('shifts')
+      .select('date')
+      .eq('id', assignment.shift_id)
+      .eq('user_id', user.id)
+      .single();
+
+    if (shiftError) {
+      console.error('Error fetching shift data:', shiftError);
+      throw new Error('Errore nel recupero dei dati del turno');
+    }
+
+    // Check for daily duplicates by name using the database function
+    const { data: duplicateCheck, error: duplicateError } = await supabase
+      .rpc('check_daily_duplicate_by_name', {
+        p_employee_name: employeeData.name,
+        p_shift_date: shiftData.date,
+        p_user_id: user.id
+      });
+
+    if (duplicateError) {
+      console.error('Error checking daily duplicates:', duplicateError);
+      throw new Error('Errore nella verifica dei duplicati');
+    }
+
+    if (duplicateCheck) {
+      throw new Error(`${employeeData.name} è già assegnato/a a un turno in questa giornata. Ogni OSS può lavorare solo un turno al giorno.`);
+    }
+
     // Check if station is already occupied
     const { data: existingAssignment, error: stationError } = await supabase
       .from('assignments')
@@ -289,34 +331,19 @@ export const assignmentService = {
       throw new Error('Postazione già occupata');
     }
 
-    // Check if OSS is already assigned to this shift
-    const { data: existingOSSAssignment, error: ossError } = await supabase
-      .from('assignments')
-      .select('id')
-      .eq('shift_id', assignment.shift_id)
-      .eq('employee_id', assignment.employee_id)
-      .eq('user_id', user.id);
-
-    if (ossError && ossError.code !== 'PGRST116') {
-      console.error('Error checking existing OSS assignment:', ossError);
-      throw new Error('Errore nella verifica dell\'assegnazione OSS');
-    }
-
-    if (existingOSSAssignment && existingOSSAssignment.length > 0) {
-      throw new Error('OSS già assegnato a questo turno');
-    }
-
     const { data, error } = await supabase
       .from('assignments')
       .insert([{
         employee_id: assignment.employee_id,
         shift_id: assignment.shift_id,
         station_number: assignment.station_number,
-        user_id: user.id
+        user_id: user.id,
+        created_by: user.id
       }])
       .select(`
         *,
-        employee:shared_oss!employee_id(*)
+        employee:shared_oss!employee_id(*),
+        created_by_profile:profiles!created_by(full_name, email)
       `)
       .single();
 
@@ -328,7 +355,8 @@ export const assignmentService = {
     // Transform the response to match expected format
     return {
       ...data,
-      employee: data.employee
+      employee: data.employee,
+      created_by_info: data.created_by_profile
     };
   },
 
@@ -336,26 +364,49 @@ export const assignmentService = {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Utente non autenticato');
 
+    // Check if user can modify this assignment
+    const { data: assignmentCheck, error: checkError } = await supabase
+      .from('assignments')
+      .select('created_by')
+      .eq('id', assignmentId)
+      .single();
+
+    if (checkError) {
+      console.error('Error checking assignment ownership:', checkError);
+      throw new Error('Errore nella verifica dei permessi');
+    }
+
+    if (assignmentCheck.created_by !== user.id) {
+      throw new Error('Non hai i permessi per modificare questa assegnazione. Puoi modificare solo le tue assegnazioni.');
+    }
+
     const { data, error } = await supabase
       .from('assignments')
       .update(updates)
       .eq('id', assignmentId)
-      .eq('user_id', user.id)
+      .eq('created_by', user.id)
       .select(`
         *,
-        employee:shared_oss!employee_id(*)
+        employee:shared_oss!employee_id(*),
+        created_by_profile:profiles!created_by(full_name, email),
+        modified_by_profile:profiles!modified_by(full_name, email)
       `)
       .single();
 
     if (error) {
       console.error('Error updating assignment:', error);
+      if (error.code === 'PGRST116') {
+        throw new Error('Assegnazione non trovata o non hai i permessi per modificarla');
+      }
       throw new Error('Errore nell\'aggiornamento dell\'assegnazione');
     }
 
     // Transform the response to match expected format
     return {
       ...data,
-      employee: data.employee
+      employee: data.employee,
+      created_by_info: data.created_by_profile,
+      modified_by_info: data.modified_by_profile
     };
   },
 
@@ -363,17 +414,78 @@ export const assignmentService = {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Utente non autenticato');
 
+    // Check if user can delete this assignment
+    const { data: assignmentCheck, error: checkError } = await supabase
+      .from('assignments')
+      .select('created_by')
+      .eq('id', assignmentId)
+      .single();
+
+    if (checkError) {
+      console.error('Error checking assignment ownership:', checkError);
+      throw new Error('Errore nella verifica dei permessi');
+    }
+
+    if (assignmentCheck.created_by !== user.id) {
+      throw new Error('Non hai i permessi per eliminare questa assegnazione. Puoi eliminare solo le tue assegnazioni.');
+    }
+
     const { error } = await supabase
       .from('assignments')
       .delete()
       .eq('id', assignmentId)
-      .eq('user_id', user.id);
+      .eq('created_by', user.id);
 
     if (error) {
       console.error('Error deleting assignment:', error);
+      if (error.code === 'PGRST116') {
+        throw new Error('Assegnazione non trovata o non hai i permessi per eliminarla');
+      }
       throw new Error('Errore nell\'eliminazione dell\'assegnazione');
     }
 
     return { message: 'Assegnazione eliminata' };
+  },
+
+  // New function to get assignment details with ownership info
+  getAssignmentDetails: async (date: string): Promise<any[]> => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Utente non autenticato');
+
+    const { data, error } = await supabase
+      .rpc('get_assignment_details', {
+        p_user_id: user.id,
+        p_date: date
+      });
+
+    if (error) {
+      console.error('Error fetching assignment details:', error);
+      throw new Error('Errore nel caricamento dei dettagli delle assegnazioni');
+    }
+
+    return data || [];
+  },
+
+  // Function to get assignment history
+  getAssignmentHistory: async (assignmentId: string): Promise<any[]> => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Utente non autenticato');
+
+    const { data, error } = await supabase
+      .from('assignment_history')
+      .select(`
+        *,
+        changed_by_profile:profiles!changed_by(full_name, email)
+      `)
+      .eq('assignment_id', assignmentId)
+      .eq('user_id', user.id)
+      .order('changed_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching assignment history:', error);
+      throw new Error('Errore nel caricamento dello storico');
+    }
+
+    return data || [];
   }
 };
