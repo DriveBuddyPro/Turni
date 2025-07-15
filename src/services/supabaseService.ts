@@ -272,6 +272,25 @@ export const assignmentService = {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Utente non autenticato');
 
+    // Check if shift already has assignments from another user
+    const { data: existingShiftAssignments, error: shiftCheckError } = await supabase
+      .from('assignments')
+      .select('user_id, created_by')
+      .eq('shift_id', assignment.shift_id)
+      .limit(1);
+
+    if (shiftCheckError && shiftCheckError.code !== 'PGRST116') {
+      console.error('Error checking shift assignments:', shiftCheckError);
+      throw new Error('Errore nella verifica del turno');
+    }
+
+    if (existingShiftAssignments && existingShiftAssignments.length > 0) {
+      const existingAssignment = existingShiftAssignments[0];
+      if (existingAssignment.created_by !== user.id) {
+        throw new Error('Questo turno è già stato compilato da un altro utente. Puoi solo visualizzarlo.');
+      }
+    }
+
     // Get employee name for duplicate check
     const { data: employeeData, error: employeeError } = await supabase
       .from('shared_oss')

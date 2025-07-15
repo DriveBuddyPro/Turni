@@ -76,11 +76,17 @@ export const exportSingleShiftPDF = (shift: any, shiftType: any, selectedDate: D
   
   let yPosition = 20;
   
-  // Header - ONLY shift name
+  // Header - shift name and date
   doc.setFontSize(20);
   doc.setTextColor(40, 40, 40);
   doc.text(shiftType.label, 20, yPosition);
-  yPosition += 30;
+  yPosition += 20;
+  
+  // Date
+  doc.setFontSize(14);
+  doc.setTextColor(100, 100, 100);
+  doc.text(format(selectedDate, 'dd MMMM yyyy', { locale: it }), 20, yPosition);
+  yPosition += 25;
   
   if (shift.assignments && shift.assignments.length > 0) {
     // Get station names for this shift type
@@ -154,7 +160,12 @@ export const exportShiftsPDF = (shifts: any[], selectedDate: Date) => {
   doc.setTextColor(40, 40, 40);
   doc.text('Turni di Lavoro', 20, 20);
   
-  let yPosition = 50;
+  // Date
+  doc.setFontSize(14);
+  doc.setTextColor(100, 100, 100);
+  doc.text(format(selectedDate, 'dd MMMM yyyy', { locale: it }), 20, 35);
+  
+  let yPosition = 60;
   
   // Process each shift
   const shiftLabels = {

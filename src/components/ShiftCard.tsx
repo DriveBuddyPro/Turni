@@ -80,6 +80,22 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
 
   const handleAutoAssignClick = () => {
     if (!shift) return;
+    
+    // Check if shift has assignments from another user
+    if (shift.assignments && shift.assignments.length > 0) {
+      const hasOtherUserAssignments = shift.assignments.some((assignment: any) => 
+        assignment.created_by !== user?.id
+      );
+      
+      if (hasOtherUserAssignments) {
+        toast.error('Questo turno è già stato compilato da un altro utente. Puoi solo visualizzarlo.', {
+          duration: 5000,
+          icon: '🔒',
+        });
+        return;
+      }
+    }
+    
     setShowAutoAssignModal(true);
     setShowMobileActions(false);
   };
@@ -557,8 +573,7 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
                         </div>
                         <div className="min-w-0">
                           <p className="font-medium text-xs sm:text-sm">Postazione Libera</p>
-                          <p className="text-xs hidden sm:block">Trascina qui un lavoratore</p>
-                          <p className="text-xs sm:hidden">Tocca e trascina</p>
+                          <p className="text-xs">Disponibile per assegnazione</p>
                         </div>
                       </div>
                     )}
@@ -588,7 +603,22 @@ const ShiftCard: React.FC<ShiftCardProps> = ({ shift, shiftType, selectedDate, o
             ))}
           </div>
 
-          {/* Instructions - Mobile Optimized */}
+          {/* Shift Status Info */}
+          {shift && shift.assignments && shift.assignments.length > 0 && (
+            <div className="text-center">
+              {shift.assignments.some((assignment: any) => assignment.created_by !== user?.id) ? (
+                <div className="inline-flex items-center px-3 py-2 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 rounded-lg text-sm">
+                  <Lock className="w-4 h-4 mr-2" />
+                  Turno compilato da altro utente - Solo visualizzazione
+                </div>
+              ) : (
+                <div className="inline-flex items-center px-3 py-2 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 rounded-lg text-sm">
+                  <User className="w-4 h-4 mr-2" />
+                  Turno modificabile - Tue assegnazioni
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
